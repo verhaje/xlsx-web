@@ -1,0 +1,23 @@
+{
+  "name": "xlsx-reader",
+  "version": "0.1.0",
+  "description": "Simple XLSX viewer that parses OpenXML using JSZip and DOMParser",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/js/main.js --bundle --outfile=src/js/app.bundle.js --sourcemap",
+    "build:prod": "esbuild src/js/main.js --bundle --outfile=src/js/app.bundle.js --minify --sourcemap",
+    "watch": "esbuild src/js/main.js --bundle --outfile=src/js/app.bundle.js --sourcemap --watch",
+    "clean": "rimraf src/js/app.bundle.js src/js/app.bundle.js.map",
+    "test": "node --experimental-vm-modules tests/formula-tests.js && node --experimental-vm-modules tests/formula-crosssheet-tests.js && node --experimental-vm-modules tests/formula-locale-tests.js && node --experimental-vm-modules tests/formula-lookup-tests.js && node --experimental-vm-modules tests/formula-aggregates-tests.js && node --experimental-vm-modules tests/conditional-formatting-tests.js"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.0",
+    "cpx": "^1.5.0",
+    "rimraf": "^5.0.0"
+  }
+}
+
+

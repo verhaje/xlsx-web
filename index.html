@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XLSX Reader</title>
+  <!-- SEO meta tags -->
+  <meta name="description" content="Open and view Excel (.xlsx) files directly in your browser — fast, client-side XLSX viewer with formula support and sheet rendering." />
+  <meta name="keywords" content="xlsx, excel, spreadsheet, viewer, javascript, client-side, xlsx reader" />
+  <meta name="robots" content="index,follow" />
+  <link rel="canonical" href="/" />
+  <!-- Open Graph / Social -->
+  <meta property="og:title" content="XLSX Reader" />
+  <meta property="og:description" content="Open and view Excel (.xlsx) files directly in your browser — fast, client-side XLSX viewer." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="XLSX Reader" />
+  <meta name="twitter:description" content="Open and view Excel (.xlsx) files directly in your browser." />
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="stylesheet" href="src/css/styles.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+</head>
+<body>
+  <!-- Welcome/Upload Screen -->
+  <div id="welcomeScreen" class="screen active">
+    <header class="header">
+      <h1 class="header-title">Upload Excel File</h1>
+      <button class="header-btn theme-toggle" id="themeToggleWelcome" aria-label="Toggle theme">
+        <svg class="theme-icon-light" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/>
+          <line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/>
+          <line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <svg class="theme-icon-dark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+    </header>
+
+    <main class="welcome-content">
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <h2 class="upload-title">Upload your Excel file</h2>
+        <p class="upload-subtitle">Drag & drop or browse to upload</p>
+        <p class="upload-formats">Supports .xlsxs</p>
+        <label class="browse-btn" for="fileInput">Browse Files</label>
+        <input id="fileInput" type="file" accept=".xlsx" hidden />
+      </div>
+
+      <!-- Recent files removed -->
+    </main>
+  </div>
+
+  <!-- Viewer Screen -->
+  <div id="viewerScreen" class="screen">
+    <header class="header viewer-header">
+      <button class="header-btn back-btn" id="backToWelcome" aria-label="Back">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <div class="header-file-info">
+        <h1 class="header-title" id="viewerFileName">Quarterly_Report.xlsx</h1>
+        <span class="header-subtitle" id="viewerLastEdited">Last edited 2m ago</span>
+      </div>
+      <div class="header-actions">
+        <button class="header-btn theme-toggle" id="themeToggleViewer" aria-label="Toggle theme">
+          <svg class="theme-icon-light" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg class="theme-icon-dark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="formula-bar">
+      <span class="formula-cell-ref" id="formulaCellRef">A1</span>
+      <input type="text" class="formula-input" id="formulaInput" readonly placeholder="Select a cell" />
+      <span class="formula-fx">fx</span>
+    </div>
+
+    <!-- toolbar removed -->
+
+    <nav id="tabs" class="tabs" aria-label="Sheets"></nav>
+
+    <div class="spreadsheet-container">
+      <div id="sheetName" class="sheet-title"></div>
+      <div id="tableContainer" class="table-container"></div>
+    </div>
+
+    <div id="status" class="status-bar"></div>
+
+    <!-- FAB removed -->
+
+    <!-- bottom navigation removed -->
+  </div>
+
+  <script src="jszip.min.js"></script>
+  <script src="src/js/app.bundle.js"></script>
+</body>
+</html>
