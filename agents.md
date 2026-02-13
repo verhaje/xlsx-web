@@ -22,6 +22,13 @@ The agent is running on **windows**. Use only windows like commands and don't us
 - `tests/formula-locale-tests.js` — Localization tests for FR/DE (can be expanded).
 - `tests/formula-crosssheet-tests.js` — Cross-sheet reference tests (14 tests).
 
+**CI & Tests**
+- Tests migrated from plain JS to TypeScript and now live under `tests/*.test.ts`.
+- Testing framework: `vitest` (devDependency) with `jsdom` for DOM-based tests.
+- `package.json` scripts updated: `test` → `vitest run`, `test:watch` → `vitest`.
+- A GitHub Actions workflow was added at `.github/workflows/ci.yml` to run `npm ci`, `npm test`, and `npm run build` on `push`/`pull_request` to `main`.
+- Old JS test files were removed after migration; CI runs the TypeScript tests and builds the bundle.
+
 **Commands**
 Build the application:
 
