@@ -163,6 +163,44 @@ export interface ImageAnchor {
   dataUrl?: string;
 }
 
+// ---- Chart / Graph Types ----
+
+export type ChartType = 'bar' | 'col' | 'line' | 'pie' | 'area' | 'scatter' | 'doughnut' | 'radar' | 'unknown';
+
+export interface ChartSeriesPoint {
+  category: string;
+  value: number;
+}
+
+export interface ChartSeries {
+  name: string;
+  points: ChartSeriesPoint[];
+  color?: string;
+}
+
+export interface ChartAxisInfo {
+  title: string;
+  id: string;
+}
+
+export interface ChartData {
+  type: ChartType;
+  title: string;
+  series: ChartSeries[];
+  categoryAxis?: ChartAxisInfo;
+  valueAxis?: ChartAxisInfo;
+  /** True when the chart XML uses cached values rather than live cell refs */
+  usesCache: boolean;
+}
+
+export interface ChartAnchor {
+  from: CellRef;
+  to: CellRef;
+  relId: string;
+  chartPath?: string;
+  chartData?: ChartData;
+}
+
 // ---- Formula Engine Types ----
 
 export type FormulaValue = string | number | boolean;
@@ -172,9 +210,14 @@ export type BuiltinFunction = (args: any[], meta?: any[]) => Promise<any>;
 export interface FormulaContext {
   resolveCell: (ref: string) => Promise<any>;
   resolveCellsBatch?: (refs: string[]) => Promise<any[]>;
+  /** Resolve a contiguous range of cells by numeric coordinates (avoids A1 string overhead). */
+  resolveRange?: (sheetName: string | undefined, startRow: number, startCol: number, endRow: number, endCol: number) => Promise<any[]>;
   sharedStrings?: string[];
   zip?: JSZip;
-  sheetDoc?: Document;
+  /** Shared cache for resolved range arrays (keyed by canonical range string). */
+  rangeCache?: Map<string, any[]>;
+  /** Return the maximum populated row for a given sheet name (used for whole-column ranges). */
+  getSheetMaxRow?: (sheetName?: string) => number;
 }
 
 export interface IFormulaEngine {
@@ -193,6 +236,10 @@ export interface ParserOptions {
   customFunctions: Record<string, BuiltinFunction>;
   builtins: Record<string, BuiltinFunction>;
   resolveCellsBatch?: (refs: string[]) => Promise<any[]>;
+  /** Shared cache for resolved range arrays (keyed by canonical range string). */
+  rangeCache?: Map<string, any[]>;
+  /** Return the maximum populated row for a given sheet name (used for whole-column ranges). */
+  getSheetMaxRow?: (sheetName?: string) => number;
 }
 
 // ---- Conditional Formatting Types ----
@@ -275,11 +322,13 @@ export interface RenderSheetOptions {
   sheetNameEl: HTMLElement;
   formulaEngine: IFormulaEngine;
   sheets: SheetInfo[];
+  /** Pre-built SheetModel from WorkbookManager (avoids re-parsing XML) */
+  sheetModel?: SheetModel;
 }
 
 export interface SheetCacheEntry {
-  cellMap: Map<string, Element>;
-  sheetDoc: Document | null;
+  cellMap?: Map<string, Element>;
+  sheetDoc?: Document | null;
   maxRow: number;
   maxCol: number;
   sheetModel?: SheetModel;

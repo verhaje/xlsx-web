@@ -89,6 +89,13 @@ export class Tokenizer {
         while (i < src.length && /[A-Za-z0-9_$]/.test(src[i])) {
           id += src[i++];
         }
+        // Support dot-notation function names like MODE.SNGL, STDEV.S, ERROR.TYPE
+        while (i < src.length && src[i] === '.' && i + 1 < src.length && /[A-Za-z]/.test(src[i + 1])) {
+          id += src[i++]; // consume '.'
+          while (i < src.length && /[A-Za-z0-9_$]/.test(src[i])) {
+            id += src[i++];
+          }
+        }
 
         // Sheet reference (Sheet1!A1)
         if (src[i] === '!') {
@@ -144,7 +151,7 @@ export class Tokenizer {
       }
 
       // Operators and punctuation
-      if ('+-*/^(),:;&<>=!'.includes(ch)) {
+      if ('+-*/^(),:;&<>=!{}'.includes(ch)) {
         if (ch === '<' && src[i + 1] === '=') {
           tokens.push({ type: 'OP', value: '<=' });
           i += 2;

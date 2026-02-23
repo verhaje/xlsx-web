@@ -18,8 +18,7 @@ export class WorkbookLoader {
    * Load the workbook relationship map.
    */
   async loadRelationshipMap(): Promise<Map<string, string>> {
-    const relsXml = await XmlParser.readZipText(this.zip, 'xl/_rels/workbook.xml.rels');
-    const relsDoc = XmlParser.parseXml(relsXml);
+    const relsDoc = await XmlParser.readZipXml(this.zip, 'xl/_rels/workbook.xml.rels');
     return XmlParser.buildRelationshipMap(relsDoc);
   }
 
@@ -27,8 +26,7 @@ export class WorkbookLoader {
    * Load the list of sheets from the workbook.
    */
   async loadSheets(relMap: Map<string, string>): Promise<SheetInfo[]> {
-    const workbookXml = await XmlParser.readZipText(this.zip, 'xl/workbook.xml');
-    const workbookDoc = XmlParser.parseXml(workbookXml);
+    const workbookDoc = await XmlParser.readZipXml(this.zip, 'xl/workbook.xml');
 
     return Array.from(workbookDoc.getElementsByTagName('sheet'))
       .map((sheet) => {

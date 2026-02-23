@@ -6,3 +6,4 @@ export { ConditionalFormatting } from './ConditionalFormatting';
 export { CellEvaluator } from './CellEvaluator';
 export { FormulaShifter } from './FormulaShifter';
 export { ImageRenderer } from './ImageRenderer';
+export { ChartRenderer } from './ChartRenderer';

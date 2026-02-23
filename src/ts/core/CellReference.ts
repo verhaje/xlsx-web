@@ -2,19 +2,51 @@
 
 import type { CellRef, RangeRef } from '../types';
 
+/** Cached regex for A1-style cell reference parsing */
+const A1_RE = /([A-Z]+)(\d+)/i;
+
+/** LRU parse cache to avoid re-parsing the same A1 refs (hot path: 3-4× per cell) */
+const PARSE_CACHE = new Map<string, CellRef>();
+const PARSE_CACHE_MAX = 65536;
+
+/** Sentinel for refs that fail to parse */
+const ZERO_REF: CellRef = Object.freeze({ col: 0, row: 0 });
+
 /**
  * Utility class for working with A1-style cell references.
  */
 export class CellReference {
   /**
    * Parse an A1-style cell reference (e.g. "B3") into { row, col }.
+   * Results are cached to avoid repeated regex + allocation overhead.
    */
   static parse(ref: string): CellRef {
-    const match = /([A-Z]+)(\d+)/i.exec(ref);
-    if (!match) return { col: 0, row: 0 };
+    const cached = PARSE_CACHE.get(ref);
+    if (cached !== undefined) return cached;
+
+    const match = A1_RE.exec(ref);
+    if (!match) {
+      PARSE_CACHE.set(ref, ZERO_REF);
+      return ZERO_REF;
+    }
     const colLetters = match[1].toUpperCase();
     const row = parseInt(match[2], 10);
-    return { col: CellReference.columnNameToIndex(colLetters), row };
+    const result: CellRef = { col: CellReference.columnNameToIndex(colLetters), row };
+
+    // Evict oldest entries when cache is full
+    if (PARSE_CACHE.size >= PARSE_CACHE_MAX) {
+      const first = PARSE_CACHE.keys().next().value;
+      if (first !== undefined) PARSE_CACHE.delete(first);
+    }
+    PARSE_CACHE.set(ref, result);
+    return result;
+  }
+
+  /**
+   * Clear the parse cache (useful for testing).
+   */
+  static clearParseCache(): void {
+    PARSE_CACHE.clear();
   }
 
   /**
@@ -28,16 +60,27 @@ export class CellReference {
     return index;
   }
 
+  /** Cache for column index → name (covers columns 1-702, i.e. A..ZZ) */
+  private static colNameCache: string[] = [];
+
   /**
    * Convert a 1-based column index to a column letter string.
+   * Cached for columns 1-702.
    */
   static columnIndexToName(index: number): string {
+    if (index > 0 && index <= 702) {
+      const cached = CellReference.colNameCache[index];
+      if (cached) return cached;
+    }
     let result = '';
     let current = index;
     while (current > 0) {
       const remainder = (current - 1) % 26;
       result = String.fromCharCode(65 + remainder) + result;
       current = Math.floor((current - 1) / 26);
+    }
+    if (index > 0 && index <= 702) {
+      CellReference.colNameCache[index] = result;
     }
     return result;
   }
@@ -96,14 +139,24 @@ export class CellReference {
 
   /**
    * Map a merged-cell reference to its anchor cell reference.
+   * Overload with pre-parsed row/col avoids redundant CellReference.parse() calls.
    */
-  static mapMergedRef(refA1: string, sheetModel: { coveredMap?: Map<string, string> } | null): string {
-    if (!sheetModel?.coveredMap) return refA1;
-    const parsed = CellReference.parse(refA1);
-    if (!parsed.row || !parsed.col) return refA1;
-    const anchorKey = sheetModel.coveredMap.get(`${parsed.row}-${parsed.col}`);
+  static mapMergedRef(refA1: string, sheetModel: { coveredMap?: Map<string, string> } | null): string;
+  static mapMergedRef(refA1: string, sheetModel: { coveredMap?: Map<string, string> } | null, row: number, col: number): string;
+  static mapMergedRef(refA1: string, sheetModel: { coveredMap?: Map<string, string> } | null, row?: number, col?: number): string {
+    if (!sheetModel?.coveredMap || sheetModel.coveredMap.size === 0) return refA1;
+    // Use pre-parsed row/col if provided, otherwise parse
+    if (row === undefined || col === undefined) {
+      const parsed = CellReference.parse(refA1);
+      row = parsed.row;
+      col = parsed.col;
+    }
+    if (!row || !col) return refA1;
+    const anchorKey = sheetModel.coveredMap.get(`${row}-${col}`);
     if (!anchorKey) return refA1;
-    const [row, col] = anchorKey.split('-').map(Number);
-    return CellReference.toA1(row, col);
+    const dashIdx = anchorKey.indexOf('-');
+    const aRow = parseInt(anchorKey.slice(0, dashIdx), 10);
+    const aCol = parseInt(anchorKey.slice(dashIdx + 1), 10);
+    return CellReference.toA1(aRow, aCol);
   }
 }

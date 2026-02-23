@@ -102,6 +102,9 @@ export class FormulaEngine implements IFormulaEngine {
       customFunctions: this.customFunctions,
       builtins: this.builtins,
       resolveCellsBatch,
+      resolveRange: context.resolveRange,
+      rangeCache: context.rangeCache,
+      getSheetMaxRow: context.getSheetMaxRow,
     });
 
     try {

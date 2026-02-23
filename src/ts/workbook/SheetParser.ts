@@ -2,12 +2,13 @@
 
 import type JSZip from 'jszip';
 import type {
-  SheetModel, ColumnStyleRange, ImageAnchor,
+  SheetModel, ColumnStyleRange, ImageAnchor, ChartAnchor,
   SharedFormulaEntry, SharedCellEntry, RangeRef,
   MergeAnchor, CellRef,
 } from '../types';
 import { XmlParser } from '../core/XmlParser';
 import { CellReference } from '../core/CellReference';
+import { ChartParser } from './ChartParser';
 
 /**
  * Parses structural data from a sheet XML document: merge cells,
@@ -128,8 +129,7 @@ export class SheetParser {
   static async loadSheetRelationships(zip: JSZip, sheetTarget: string): Promise<Map<string, string>> {
     const relsPath = sheetTarget.replace('.xml', '.xml.rels');
     try {
-      const relsXml = await XmlParser.readZipText(zip, relsPath);
-      const relsDoc = XmlParser.parseXml(relsXml);
+      const relsDoc = await XmlParser.readZipXml(zip, relsPath);
       return XmlParser.buildRelationshipMap(relsDoc);
     } catch {
       return new Map();
@@ -141,8 +141,7 @@ export class SheetParser {
    */
   static async loadDrawing(zip: JSZip, drawingTarget: string): Promise<ImageAnchor[]> {
     try {
-      const drawingXml = await XmlParser.readZipText(zip, drawingTarget);
-      const drawingDoc = XmlParser.parseXml(drawingXml);
+      const drawingDoc = await XmlParser.readZipXml(zip, drawingTarget);
       return SheetParser.parseDrawing(drawingDoc);
     } catch {
       return [];
@@ -151,16 +150,47 @@ export class SheetParser {
 
   /**
    * Load a media file as a data URL.
+   * @param mediaPath - fully resolved path inside the zip, e.g. "xl/media/image1.png"
    */
-  static async loadMedia(zip: JSZip, embedId: string): Promise<string | null> {
+  static async loadMedia(zip: JSZip, mediaPath: string): Promise<string | null> {
     try {
-      const mediaPath = `xl/media/${embedId}`;
       const mediaFile = zip.file(mediaPath);
       if (!mediaFile) return null;
       const data = await mediaFile.async('base64');
-      return `data:image/png;base64,${data}`;
+      const ext = mediaPath.split('.').pop()?.toLowerCase() || 'png';
+      const mimeMap: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        bmp: 'image/bmp',
+        svg: 'image/svg+xml',
+        webp: 'image/webp',
+        emf: 'image/x-emf',
+        wmf: 'image/x-wmf',
+        tiff: 'image/tiff',
+        tif: 'image/tiff',
+      };
+      const mime = mimeMap[ext] || 'image/png';
+      return `data:${mime};base64,${data}`;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Load the relationship map for a drawing XML file.
+   */
+  static async loadDrawingRelationships(
+    zip: JSZip,
+    drawingTarget: string
+  ): Promise<Map<string, string>> {
+    const relsPath = drawingTarget.replace(/([^/]+)$/, '_rels/$1.rels');
+    try {
+      const relsDoc = await XmlParser.readZipXml(zip, relsPath);
+      return XmlParser.buildRelationshipMap(relsDoc);
+    } catch {
+      return new Map();
     }
   }
 
@@ -196,6 +226,52 @@ export class SheetParser {
   }
 
   // ---- Private helpers ----
+
+  /**
+   * Load charts referenced by a drawing XML file.
+   * Parses drawing rels for chart relationships and loads each chart XML.
+   */
+  static async loadDrawingCharts(zip: JSZip, drawingTarget: string): Promise<ChartAnchor[]> {
+    try {
+      const drawingDoc = await XmlParser.readZipXml(zip, drawingTarget);
+
+      // Parse chart anchors from drawing
+      const chartAnchors = ChartParser.parseChartAnchors(drawingDoc);
+      if (chartAnchors.length === 0) return [];
+
+      // Load drawing rels to resolve chart relationship IDs
+      const relsPath = drawingTarget.replace(/([^/]+)$/, '_rels/$1.rels');
+      let drawingRels = new Map<string, string>();
+      try {
+        const relsDoc = await XmlParser.readZipXml(zip, relsPath);
+        drawingRels = XmlParser.buildRelationshipMap(relsDoc);
+      } catch {
+        return [];
+      }
+
+      const charts: ChartAnchor[] = [];
+      for (const anchor of chartAnchors) {
+        const chartTarget = drawingRels.get(anchor.relId);
+        if (!chartTarget) continue;
+
+        const chartPath = XmlParser.normalizeTargetPath(chartTarget);
+        const chartData = await ChartParser.parseChart(zip, chartPath);
+        if (!chartData) continue;
+
+        charts.push({
+          from: anchor.from,
+          to: anchor.to,
+          relId: anchor.relId,
+          chartPath,
+          chartData,
+        });
+      }
+
+      return charts;
+    } catch {
+      return [];
+    }
+  }
 
   private static parseDrawing(drawingDoc: Document): ImageAnchor[] {
     const images: ImageAnchor[] = [];

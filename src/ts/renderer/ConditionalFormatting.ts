@@ -60,7 +60,6 @@ export class ConditionalFormatting {
   private formulaEngine: IFormulaEngine | null;
   private sharedStrings: string[];
   private zip: any;
-  private sheetDoc: Document;
 
   constructor(
     styles: StyleResult,
@@ -68,14 +67,12 @@ export class ConditionalFormatting {
     formulaEngine: IFormulaEngine | null,
     sharedStrings: string[],
     zip: any,
-    sheetDoc: Document
   ) {
     this.styles = styles;
     this.evaluateCellByRef = evaluateCellByRef;
     this.formulaEngine = formulaEngine;
     this.sharedStrings = sharedStrings;
     this.zip = zip;
-    this.sheetDoc = sheetDoc;
   }
 
   /**
@@ -478,7 +475,6 @@ export class ConditionalFormatting {
       resolveCell: async (r: string) => await this.evaluateCellByRef(r),
       sharedStrings: this.sharedStrings,
       zip: this.zip,
-      sheetDoc: this.sheetDoc,
     });
   }
 

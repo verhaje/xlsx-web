@@ -3,7 +3,7 @@
 import type JSZip from 'jszip';
 import type {
   SheetInfo, SheetModel, StyleResult, ColumnStyleRange,
-  ImageAnchor, CellStyleResult, RenderSheetOptions,
+  ImageAnchor, ChartAnchor, CellStyleResult, RenderSheetOptions,
   CfEntry, SheetCacheEntry, CssProperties, IFormulaEngine,
 } from '../types';
 import { XmlParser } from '../core/XmlParser';
@@ -13,6 +13,7 @@ import { StyleApplicator } from '../styles/StyleApplicator';
 import { CellEvaluator } from './CellEvaluator';
 import { ConditionalFormatting } from './ConditionalFormatting';
 import { ImageRenderer } from './ImageRenderer';
+import { ChartRenderer } from './ChartRenderer';
 import { FormulaShifter } from './FormulaShifter';
 
 /**
@@ -27,14 +28,15 @@ export class SheetRenderer {
     const { zip, sheet, sharedStrings, styles, tableContainer, sheetNameEl, formulaEngine, sheets } = options;
     if (!sheet.target) return;
 
-    const sheetXml = await XmlParser.readZipText(zip, sheet.target);
-    const sheetDoc = XmlParser.parseXml(sheetXml);
+    const sheetDoc = await XmlParser.readZipXml(zip, sheet.target);
     const sheetData = sheetDoc.getElementsByTagName('sheetData')[0];
-    const sheetModel = SheetParser.buildSheetModel(sheetDoc);
+    // Reuse the SheetModel from WorkbookManager if provided, avoiding
+    // a redundant parse of merge cells and shared formulas.
+    const sheetModel = options.sheetModel ?? SheetParser.buildSheetModel(sheetDoc);
     const columnStyleRanges = SheetParser.parseColumnStyles(sheetDoc);
 
-    // Load images for this sheet
-    const images = await SheetRenderer.loadSheetImages(zip, sheet.target);
+    // Load images and charts in parallel, sharing the relationship map
+    const [images, charts] = await SheetRenderer.loadSheetAssets(zip, sheet.target);
 
     // Parse conditional formatting rules
     const cfMap = ConditionalFormatting.parseCfRules(sheetDoc, styles);
@@ -67,12 +69,21 @@ export class SheetRenderer {
       });
     });
 
+    // Extend grid by +20 rows and +20 columns beyond defined data
+    const EXTRA_ROWS = 20;
+    const EXTRA_COLS = 20;
+    const renderMaxRow = maxRow + EXTRA_ROWS;
+    const renderMaxCol = maxCol + EXTRA_COLS;
+
     // Sheet cache (evaluation caching across sheets)
     const sheetCache = new Map<string, any>();
-    sheetCache.set(sheet.name, { cellMap, sheetDoc, maxRow, maxCol, sheetModel });
+    sheetCache.set(sheet.name, { cellMap, sheetDoc, maxRow: renderMaxRow, maxCol: renderMaxCol, sheetModel });
+
+    // Shared range cache for all formulas in this sheet (avoids re-resolving identical ranges)
+    const rangeCache = new Map<string, any[]>();
 
     // Cell evaluator
-    const cellEvaluator = new CellEvaluator(zip, sheet, sheets, sharedStrings, formulaEngine, sheetCache);
+    const cellEvaluator = new CellEvaluator(zip, sheet, sheets, sharedStrings, formulaEngine, sheetCache, rangeCache);
 
     // Conditional formatting evaluator
     const cfEvaluator = new ConditionalFormatting(
@@ -81,7 +92,6 @@ export class SheetRenderer {
       formulaEngine,
       sharedStrings,
       zip,
-      sheetDoc
     );
 
     // Build column style index
@@ -97,7 +107,11 @@ export class SheetRenderer {
     table.className = 'sheet-table';
 
     const colgroup = document.createElement('colgroup');
-    for (let c = 1; c <= maxCol; c += 1) {
+    // Add a <col> for the row-header column so <col> elements align 1:1 with table columns
+    const rowHeaderCol = document.createElement('col');
+    rowHeaderCol.className = 'row-header-col';
+    colgroup.appendChild(rowHeaderCol);
+    for (let c = 1; c <= renderMaxCol; c += 1) {
       const colEl = document.createElement('col');
       colEl.dataset.colIndex = String(c);
       colgroup.appendChild(colEl);
@@ -109,7 +123,7 @@ export class SheetRenderer {
     const corner = document.createElement('th');
     corner.textContent = '';
     headerRow.appendChild(corner);
-    for (let col = 1; col <= maxCol; col += 1) {
+    for (let col = 1; col <= renderMaxCol; col += 1) {
       const th = document.createElement('th');
       th.textContent = CellReference.columnIndexToName(col);
       th.dataset.colIndex = String(col);
@@ -120,22 +134,33 @@ export class SheetRenderer {
 
     const tbody = document.createElement('tbody');
 
-    // Yield helper for large renders
-    const yieldToEventLoop = () => new Promise<void>((res) => setTimeout(res, 0));
-    const batchSize = 50;
+    // Yield helper for large renders – use setTimeout to schedule a macrotask.
+    // Using rAF here is counterproductive: all subsequent awaited microtasks
+    // (from Promise.all / async-await) chain inside the *same* rAF callback,
+    // so the browser never gets a chance to paint until the entire batch
+    // finishes. setTimeout(0) pushes continuation to the next task, allowing
+    // the browser to paint the loading spinner and keep the UI responsive.
+    const yieldToEventLoop = () =>
+      new Promise<void>((res) => {
+        setTimeout(res, 0);
+      });
+    // Larger batches reduce yield overhead (each yield triggers layout); 500 is
+    // a good trade-off between responsiveness and throughput.
+    const batchSize = 500;
 
     // Show loading overlay
     const loadingOverlay = document.createElement('div');
     loadingOverlay.className = 'sheet-loading-overlay';
     loadingOverlay.innerHTML =
-      '<div class="sheet-loading-spinner"></div><div class="sheet-loading-text">Rendering sheet\u2026</div>';
-    tableContainer.innerHTML = '';
-    tableContainer.appendChild(loadingOverlay);
+      '<div class=\"sheet-loading-spinner\"></div><div class=\"sheet-loading-text\">Rendering sheet\u2026</div>';
+    tableContainer.replaceChildren(loadingOverlay);
     await yieldToEventLoop();
-
+    // Wrap the entire rendering pipeline in try/finally so that the loading
+    // overlay is always replaced even if a formula evaluation throws.
+    try {
     // Render rows in batches
-    for (let startRow = 1; startRow <= maxRow; startRow += batchSize) {
-      const endRow = Math.min(maxRow, startRow + batchSize - 1);
+    for (let startRow = 1; startRow <= renderMaxRow; startRow += batchSize) {
+      const endRow = Math.min(renderMaxRow, startRow + batchSize - 1);
       const frag = document.createDocumentFragment();
       const deferredWork: DeferredWorkItem[] = [];
 
@@ -146,7 +171,7 @@ export class SheetRenderer {
         tr.appendChild(rowHeader);
         rowHeader.dataset.rowIndex = String(row);
 
-        for (let col = 1; col <= maxCol; col += 1) {
+        for (let col = 1; col <= renderMaxCol; col += 1) {
           const key = `${row}-${col}`;
           if (sheetModel.coveredMap.has(key)) continue;
 
@@ -207,11 +232,89 @@ export class SheetRenderer {
         frag.appendChild(tr);
       }
 
-      // Evaluate deferred formulas and conditional formatting concurrently
+      // Evaluate deferred formulas and conditional formatting
       if (deferredWork.length > 0) {
-        await Promise.all(
-          deferredWork.map(async (item) => {
-            if (item.cfOnly) {
+        // Split deferred work: CF-only items can be concurrent, formula items are sequential
+        const cfOnlyItems = deferredWork.filter((item) => item.cfOnly);
+        const formulaItems = deferredWork.filter((item) => !item.cfOnly);
+
+        // Evaluate formulas in parallel chunks for throughput.
+        // Range-cache is shared, so earlier evaluations still benefit later ones.
+        // Yield to the event loop periodically to keep the UI responsive on
+        // formula-heavy sheets (prevents the 27s hang seen in the trace).
+        const FORMULA_CHUNK = 32;
+        let chunksSinceYield = 0;
+        const YIELD_EVERY_N_CHUNKS = 4; // yield every ~128 formulas
+        for (let fi = 0; fi < formulaItems.length; fi += FORMULA_CHUNK) {
+          const chunk = formulaItems.slice(fi, fi + FORMULA_CHUNK);
+          await Promise.all(
+            chunk.map(async (item) => {
+              const { td, row, col, key, cellEl, cellRef, formulaText, cacheKey, fallbackStyleIndex } = item;
+              let val: any;
+
+              // Re-check shared cache
+              if (cacheKey && sheetCache.get('__sharedValues')?.has(cacheKey)) {
+                val = sheetCache.get('__sharedValues').get(cacheKey);
+              } else {
+                val = await formulaEngine.evaluateFormula(formulaText, {
+                  resolveCell: async (r: string) => await cellEvaluator.evaluateCellByRef(r),
+                  resolveCellsBatch: async (refs: string[]) => await cellEvaluator.evaluateCellsBatch(refs),
+                  resolveRange: async (sn: string | undefined, sr: number, sc: number, er: number, ec: number) =>
+                    await cellEvaluator.resolveRange(sn, sr, sc, er, ec),
+                  sharedStrings,
+                  zip,
+                  rangeCache,
+                  getSheetMaxRow: (sheetName?: string) => {
+                    // Use the sheet cache to find actual data extent; avoids
+                    // defaulting whole-column ranges to 5000 rows which causes
+                    // millions of unnecessary cell iterations and GC pressure.
+                    const name = sheetName || sheet.name;
+                    const entry = sheetCache.get(name) as SheetCacheEntry | undefined;
+                    if (entry && entry.maxRow && entry.maxRow > 0) return entry.maxRow;
+                    return 200; // conservative fallback for not-yet-loaded sheets
+                  },
+                });
+                if (cacheKey) {
+                  if (!sheetCache.has('__sharedValues')) sheetCache.set('__sharedValues', new Map());
+                  sheetCache.get('__sharedValues').set(cacheKey, val);
+                }
+              }
+
+              td.dataset.value = val;
+              const cellStyle = StyleApplicator.getCellStyle(
+                cellEl, styles.cellXfs, styles.fonts, styles.themeColors,
+                styles.fills, styles.borders, styles.cellStyleXfs, fallbackStyleIndex
+              );
+              SheetRenderer.applyCellContent(td, val, cellStyle, sheetModel, key);
+
+              // Apply conditional formatting for this formula cell
+              const cfEntries = cfMap.get(key) || [];
+              if (cfEntries.length) {
+                for (const entry of cfEntries) {
+                  const result = await cfEvaluator.evaluate(entry, val, row, col);
+                  if (result.matched) {
+                    ConditionalFormatting.applyCfToTd(item.td, result);
+                    if (entry.rule.stopIfTrue) break;
+                  }
+                }
+              }
+            })
+          );          // Yield to the event loop periodically to keep UI responsive
+          chunksSinceYield++;
+          if (chunksSinceYield >= YIELD_EVERY_N_CHUNKS) {
+            chunksSinceYield = 0;
+            await yieldToEventLoop();
+          }        }
+
+        // CF-only items – batch them with periodic yields to avoid blocking
+        // the main thread with 500+ concurrent promise chains.
+        const CF_CHUNK = 32;
+        let cfChunksSinceYield = 0;
+        const CF_YIELD_EVERY = 4;
+        for (let ci = 0; ci < cfOnlyItems.length; ci += CF_CHUNK) {
+          const cfChunk = cfOnlyItems.slice(ci, ci + CF_CHUNK);
+          await Promise.all(
+            cfChunk.map(async (item) => {
               for (const entry of item.cfEntries) {
                 const result = await cfEvaluator.evaluate(entry, item.value, item.row, item.col);
                 if (result.matched) {
@@ -219,64 +322,56 @@ export class SheetRenderer {
                   if (entry.rule.stopIfTrue) break;
                 }
               }
-              return;
-            }
-
-            const { td, row, col, key, cellEl, cellRef, formulaText, cacheKey, fallbackStyleIndex } = item;
-            let val: any;
-
-            // Re-check shared cache
-            if (cacheKey && sheetCache.get('__sharedValues')?.has(cacheKey)) {
-              val = sheetCache.get('__sharedValues').get(cacheKey);
-            } else {
-              val = await formulaEngine.evaluateFormula(formulaText, {
-                resolveCell: async (r: string) => await cellEvaluator.evaluateCellByRef(r),
-                sharedStrings,
-                zip,
-                sheetDoc,
-              });
-              if (cacheKey) {
-                if (!sheetCache.has('__sharedValues')) sheetCache.set('__sharedValues', new Map());
-                sheetCache.get('__sharedValues').set(cacheKey, val);
-              }
-            }
-
-            td.dataset.value = val;
-            const cellStyle = StyleApplicator.getCellStyle(
-              cellEl, styles.cellXfs, styles.fonts, styles.themeColors,
-              styles.fills, styles.borders, styles.cellStyleXfs, fallbackStyleIndex
-            );
-            SheetRenderer.applyCellContent(td, val, cellStyle, sheetModel, key);
-
-            // Apply conditional formatting
-            const cfEntries = cfMap.get(key) || [];
-            if (cfEntries.length) {
-              for (const entry of cfEntries) {
-                const result = await cfEvaluator.evaluate(entry, val, row, col);
-                if (result.matched) {
-                  ConditionalFormatting.applyCfToTd(td, result);
-                  if (entry.rule.stopIfTrue) break;
-                }
-              }
-            }
-          })
-        );
+            })
+          );
+          cfChunksSinceYield++;
+          if (cfChunksSinceYield >= CF_YIELD_EVERY) {
+            cfChunksSinceYield = 0;
+            await yieldToEventLoop();
+          }
+        }
       }
 
       tbody.appendChild(frag);
-      await yieldToEventLoop();
+      // Only yield periodically on large sheets to keep the UI responsive
+      // without incurring constant layout invalidation overhead.
+      if (renderMaxRow > batchSize && startRow + batchSize <= renderMaxRow) {
+        await yieldToEventLoop();
+      }
     }
 
     table.appendChild(tbody);
     sheetNameEl.textContent = sheet.name;
 
-    // Remove loading overlay and show table
-    tableContainer.innerHTML = '';
-    tableContainer.appendChild(table);
+    // Remove loading overlay and show table – use replaceChildren to do a
+    // single atomic DOM swap instead of innerHTML = '' + appendChild which
+    // causes two separate layout invalidations.
+    tableContainer.replaceChildren(table);
+
+    } catch (err) {
+      // Ensure loading overlay is removed even on error
+      console.error('SheetRenderer: error during rendering', err);
+      tableContainer.replaceChildren(table);
+    }
 
     // Render images
     if (images.length > 0) {
       ImageRenderer.renderImages(tableContainer, images);
+    }
+
+    // Render charts
+    if (charts.length > 0) {
+      ChartRenderer.renderCharts(tableContainer, charts);
+    }
+
+    // Release heavy XML DOM objects and cellMaps from the render-time cache.
+    // CellStore already holds all extracted data; keeping these would waste
+    // hundreds of MB on large workbooks.
+    for (const [, entry] of sheetCache) {
+      if (entry && typeof entry === 'object') {
+        entry.cellMap = undefined;
+        entry.sheetDoc = undefined;
+      }
     }
 
     return table;
@@ -285,23 +380,48 @@ export class SheetRenderer {
   // ---- Private helpers ----
 
   /**
-   * Load images referenced by a sheet.
+   * Load images and charts for a sheet in one pass, sharing the relationship
+   * map so the .rels file is only read once.
    */
-  private static async loadSheetImages(zip: JSZip, target: string): Promise<ImageAnchor[]> {
+  private static async loadSheetAssets(
+    zip: JSZip,
+    target: string
+  ): Promise<[ImageAnchor[], ChartAnchor[]]> {
     const sheetRels = await SheetParser.loadSheetRelationships(zip, target);
     const images: ImageAnchor[] = [];
-    for (const [relId, relTarget] of sheetRels) {
+    const charts: ChartAnchor[] = [];
+
+    // Collect unique drawing paths
+    const drawingPaths = new Set<string>();
+    for (const [, relTarget] of sheetRels) {
       if (relTarget.includes('drawings/')) {
-        const drawingImages = await SheetParser.loadDrawing(zip, XmlParser.normalizeTargetPath(relTarget));
-        for (const image of drawingImages) {
-          const mediaData = await SheetParser.loadMedia(zip, image.embed);
-          if (mediaData) {
-            images.push({ ...image, dataUrl: mediaData });
-          }
-        }
+        drawingPaths.add(XmlParser.normalizeTargetPath(relTarget));
       }
     }
-    return images;
+
+    // Process each drawing once for both images and charts
+    for (const drawingPath of drawingPaths) {
+      const [drawingImages, drawingCharts, drawingRels] = await Promise.all([
+        SheetParser.loadDrawing(zip, drawingPath),
+        SheetParser.loadDrawingCharts(zip, drawingPath),
+        SheetParser.loadDrawingRelationships(zip, drawingPath),
+      ]);
+
+      // Load image media data — resolve embed IDs through drawing rels
+      for (const image of drawingImages) {
+        const relTarget = drawingRels.get(image.embed);
+        if (!relTarget) continue;
+        const mediaPath = XmlParser.normalizeTargetPath(relTarget);
+        const mediaData = await SheetParser.loadMedia(zip, mediaPath);
+        if (mediaData) {
+          images.push({ ...image, dataUrl: mediaData });
+        }
+      }
+
+      charts.push(...drawingCharts);
+    }
+
+    return [images, charts];
   }
 
   /**

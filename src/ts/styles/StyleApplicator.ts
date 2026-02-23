@@ -80,6 +80,19 @@ export class StyleApplicator {
   }
 
   /**
+   * Cache for base style objects keyed by style index.
+   * Avoids recomputing the same CSS properties for every cell that shares a style.
+   */
+  private static baseStyleCache = new Map<number, CssProperties>();
+
+  /**
+   * Clear the base-style cache (call when loading a new workbook).
+   */
+  static clearStyleCache(): void {
+    StyleApplicator.baseStyleCache.clear();
+  }
+
+  /**
    * Get the full cell style (single value or rich-text runs) for a cell.
    */
   static getCellStyle(
@@ -92,7 +105,6 @@ export class StyleApplicator {
     cellStyleXfs: CellXf[],
     fallbackStyleIndex?: string | null
   ): CellStyleResult {
-    let baseStyle: CssProperties = {};
     let styleIndex: number | null = null;
 
     if (cellNode?.getAttribute) {
@@ -108,16 +120,26 @@ export class StyleApplicator {
       if (!Number.isNaN(idx)) styleIndex = idx;
     }
 
-    if (styleIndex != null && cellXfs) {
-      const xf = cellXfs[styleIndex];
-      if (xf) {
-        if (xf.xfId != null && cellStyleXfs) {
-          const baseIdx = parseInt(xf.xfId, 10);
-          if (!Number.isNaN(baseIdx) && cellStyleXfs[baseIdx]) {
-            StyleApplicator.applyXfStyle(baseStyle, cellStyleXfs[baseIdx], fonts, themeColors, fills, borders);
+    // Use cached base style when the same style index is reused across cells
+    let baseStyle: CssProperties;
+    if (styleIndex != null && StyleApplicator.baseStyleCache.has(styleIndex)) {
+      baseStyle = StyleApplicator.baseStyleCache.get(styleIndex)!;
+    } else {
+      baseStyle = {};
+      if (styleIndex != null && cellXfs) {
+        const xf = cellXfs[styleIndex];
+        if (xf) {
+          if (xf.xfId != null && cellStyleXfs) {
+            const baseIdx = parseInt(xf.xfId, 10);
+            if (!Number.isNaN(baseIdx) && cellStyleXfs[baseIdx]) {
+              StyleApplicator.applyXfStyle(baseStyle, cellStyleXfs[baseIdx], fonts, themeColors, fills, borders);
+            }
           }
+          StyleApplicator.applyXfStyle(baseStyle, xf, fonts, themeColors, fills, borders);
         }
-        StyleApplicator.applyXfStyle(baseStyle, xf, fonts, themeColors, fills, borders);
+      }
+      if (styleIndex != null) {
+        StyleApplicator.baseStyleCache.set(styleIndex, baseStyle);
       }
     }
 
@@ -142,13 +164,28 @@ export class StyleApplicator {
   }
 
   /**
+   * Convert a camelCase CSS property name to kebab-case.
+   */
+  private static toKebab(prop: string): string {
+    return prop.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase());
+  }
+
+  /**
    * Apply CSS properties object to an element's inline style.
+   * Uses cssText for bulk application to avoid repeated style recalculations.
    */
   static applyCssToElement(element: HTMLElement, cssObject: CssProperties | null | undefined): void {
     if (!cssObject) return;
-    Object.entries(cssObject).forEach(([key, value]) => {
-      if (value != null) (element.style as any)[key] = value;
-    });
+    const entries = Object.entries(cssObject);
+    if (entries.length === 0) return;
+
+    // Build a single cssText string and apply at once to minimise style recalcs
+    const parts: string[] = [];
+    if (element.style.cssText) parts.push(element.style.cssText);
+    for (const [key, value] of entries) {
+      if (value != null) parts.push(`${StyleApplicator.toKebab(key)}:${value}`);
+    }
+    element.style.cssText = parts.join(';');
   }
 
   // ---- Private helpers ----

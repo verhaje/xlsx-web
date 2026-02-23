@@ -48,8 +48,13 @@ export class TableResizer {
     const cols = colgroup ? Array.from(colgroup.querySelectorAll('col')) as HTMLElement[] : [];
 
     // Column resize handles
+    // cols may include a leading <col> for the row-header column, so data
+    // columns start at offset 1 when such a col is present.
+    const dataColOffset = (cols.length > 0 && !cols[0].dataset.colIndex) ? 1 : 0;
+
     dataHeaderThs.forEach((th, idx) => {
-      const colEl = (cols[idx] || ensuredColgroup!.querySelectorAll('col')[idx] || null) as HTMLElement | null;
+      const colIdx = idx + dataColOffset;
+      const colEl = (cols[colIdx] || ensuredColgroup!.querySelectorAll('col')[colIdx] || null) as HTMLElement | null;
       const handle = document.createElement('div');
       handle.className = 'col-resize-handle';
       handle.title = 'Resize column';
@@ -67,13 +72,13 @@ export class TableResizer {
         const startWidths = allCols.map((c, i) => {
           const w = c.style.width ? parseInt(c.style.width, 10) : null;
           if (w && !Number.isNaN(w)) return w;
-          const thForIdx = dataHeaderThs[i];
+          const thForIdx = dataHeaderThs[i - dataColOffset];
           const measured = thForIdx ? Math.round(thForIdx.getBoundingClientRect().width) : 60;
           c.style.width = measured + 'px';
           return measured;
         });
 
-        const startWidth = colEl ? startWidths[idx] : (th.getBoundingClientRect().width || 60);
+        const startWidth = colEl ? startWidths[colIdx] : (th.getBoundingClientRect().width || 60);
         setResizing(true);
         if (handle.setPointerCapture) handle.setPointerCapture(e.pointerId);
 
