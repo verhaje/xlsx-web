@@ -22,6 +22,13 @@ The agent is running on **windows**. Use only windows like commands and don't us
 - `tests/formula-locale-tests.js` — Localization tests for FR/DE (can be expanded).
 - `tests/formula-crosssheet-tests.js` — Cross-sheet reference tests (14 tests).
 
+**CI & Tests**
+- Tests migrated from plain JS to TypeScript and now live under `tests/*.test.ts`.
+- Testing framework: `vitest` (devDependency) with `jsdom` for DOM-based tests.
+- `package.json` scripts updated: `test` → `vitest run`, `test:watch` → `vitest`.
+- A GitHub Actions workflow was added at `.github/workflows/ci.yml` to run `npm ci`, `npm test`, and `npm run build` on `push`/`pull_request` to `main`.
+- Old JS test files were removed after migration; CI runs the TypeScript tests and builds the bundle.
+
 **Commands**
 Build the application:
 
@@ -50,6 +57,7 @@ Development mode with auto-rebuild:
 npm run watch
 ```
 
+
 **Notes & Conventions**
 - The formula engine exposes `createFormulaEngine()` and `evaluateFormula()` for evaluator integration.
 - Locale maps can be extended by adding files under `src/formula/locales/` and loading them in `main.js`.
@@ -58,3 +66,19 @@ npm run watch
 **Next steps**
 - Add more locale maps as needed.
 - Expand tests to cover additional Excel functions and edge cases.
+
+## Code styling
+
+### Code Simplicity
+- Write clear and maintainable code. Follow SOLID principles.
+- Use the DRY principle. Don't repeat yourself. 
+- Break large classes or methods into smaller, reusable ones.
+- Ensure each method focuses on a single task.
+
+### File Organization
+- Create one file per class to maintain clarity and organization.
+
+## Performance
+- Choose efficient data structures and prefer asynchronous operations for tasks that don't require immediate processing.
+- Use caching mechanisms (e.g., in-memory caches, CDN) to optimize performance.
+
